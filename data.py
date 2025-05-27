@@ -103,7 +103,7 @@ def collate_fn(batch):
 def get_dataloaders(batch_size=32, train_size=0.8, shuffle=True):
     
     assert train_size < 1 and train_size > 0, "train_size must be between 0 and 1"
-    dataset = VOCDataset(r"C:\Users\VARDAN S KAMRA\Desktop\Projects\Object Detection\VOC2012")
+    dataset = VOCDataset(r"VOC2012")
     
     train_size = int(train_size * len(dataset))
     test_size = int(len(dataset) - train_size)
