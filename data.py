@@ -9,7 +9,7 @@ from PIL import Image
 from torch.utils.data import Dataset, DataLoader, random_split
 
 class VOCDataset(Dataset):
-    def __init__(self, root_dir, image_set='train'):
+    def __init__(self, root_dir: str, image_set: str ='train', resize_shape: tuple[int, int]=(224, 224)):
         self.root = root_dir # Path to VOC2012
         self.image_dir = os.path.join(self.root, "JPEGImages")
         self.ann_dir = os.path.join(self.root, "Annotations")
@@ -18,15 +18,18 @@ class VOCDataset(Dataset):
         with open (image_set_file, 'r') as f: 
             self.image_ids = f.readlines()
             self.image_ids = [i.strip() for i in self.image_ids]
-        
+            
+        # MAP CLASS TO A NUMBER
         self.class_names = ['aeroplane', 'bicycle', 'bird', 'boat', 'bottle',
                             'bus', 'car', 'cat', 'chair', 'cow', 'diningtable',
                             'dog', 'horse', 'motorbike', 'person', 'pottedplant',
                             'sheep', 'sofa', 'train', 'tvmonitor']
         
-        # MAP CLASS TO A NUMBER
         self.class_dict = {name: idx for name, idx in enumerate(self.class_names)}
-        self.transform = T.Compose([T.Resize((224, 224)), T.ToTensor()])
+        
+        self.resize_shape = resize_shape
+        self.transform = T.Compose([T.Resize(self.resize_shape), T.ToTensor()]) 
+        # Remember that Torch Resize takes (height, width), but PIL uses (width, height)
         
     def __len__(self):
         return len(self.image_ids)
@@ -38,6 +41,7 @@ class VOCDataset(Dataset):
         
         # OPEN IMAGE
         image = Image.open(image_path).convert('RGB')
+        original_w, original_h = image.size() # PIL gives width, height; we will use this to scale the bounding boxes
         
         # PARSE XML TREE
         tree = ET.parse(ann_path)
@@ -66,14 +70,21 @@ class VOCDataset(Dataset):
         boxes = torch.tensor(boxes, dtype=torch.float32) # Shape: [num_objects, 4]
         labels = torch.tensor(labels, dtype=torch.int64) # Shape: [num_objects]
         
+        image = self.transform(image)
+        new_h, new_w = self.resize_shape # Again, we take in (height, width) for resize; but PIL uses (width, height)
+        
+        # Scale the bounding boxes as per the scale the image was changed
+        scale_x = new_w / original_w
+        scale_y = new_h / original_h
+        boxes[:, [0, 2]] *= scale_x 
+        boxes[:, [1, 3]] *= scale_y
+        
         target = {
             "boxes": boxes,
             "labels": labels,
             "image_id": torch.tensor([index])
         }
-        
-        image = self.transform(image)
-            
+                    
         return image, target
     
 # Now we need a collate function because DataLoader does this (for batch_size=2):
@@ -100,7 +111,7 @@ class VOCDataset(Dataset):
 def collate_fn(batch):
     return tuple(zip(*batch))
 
-def get_dataloaders(batch_size=32, train_size=0.8, shuffle=True):
+def get_data(batch_size=32, train_size=0.8, shuffle=True):
     
     assert train_size < 1 and train_size > 0, "train_size must be between 0 and 1"
     dataset = VOCDataset(r"VOC2012")
@@ -113,5 +124,22 @@ def get_dataloaders(batch_size=32, train_size=0.8, shuffle=True):
     train_dataloader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn, drop_last=True)
     test_dataloader = DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, drop_last=True)
     
-    return train_dataloader, test_dataloader
+    return train_dataloader, test_dataloader, dataset.class_dict
 
+# During training and inference, the model expects images to be resized to a fixed size 
+# (e.g., 224x224) for consistency and performance. The bounding box annotations are also 
+# scaled accordingly to match the resized image.
+
+# However, during real-world inference (e.g., webcam or video), the original frame will 
+# likely be a different size (e.g., 640x480). After the model predicts bounding boxes 
+# on the resized image, we must scale those predictions *back* to the original image 
+# dimensions for accurate visualization.
+
+# Example:
+#   scale_x = orig_width / resized_width
+#   scale_y = orig_height / resized_height
+#   boxes[:, [0, 2]] *= scale_x  # xmin, xmax
+#   boxes[:, [1, 3]] *= scale_y  # ymin, ymax
+
+# This ensures we can draw correct bounding boxes on the original image while still
+# using a model trained on resized inputs (YOLO-style detectors require fixed-size input).
