@@ -1,7 +1,6 @@
 import os
 import torch
 import xml.etree.ElementTree as ET 
-import torch.utils
 import torchvision.transforms as T 
 import torchvision.transforms.functional as F 
 
@@ -25,7 +24,7 @@ class VOCDataset(Dataset):
                             'dog', 'horse', 'motorbike', 'person', 'pottedplant',
                             'sheep', 'sofa', 'train', 'tvmonitor']
         
-        self.class_dict = {name: idx for name, idx in enumerate(self.class_names)}
+        self.class_dict = {name: idx for idx, name in enumerate(self.class_names)}
         
         self.resize_shape = resize_shape
         self.transform = T.Compose([T.Resize(self.resize_shape), T.ToTensor()]) 
@@ -41,7 +40,7 @@ class VOCDataset(Dataset):
         
         # OPEN IMAGE
         image = Image.open(image_path).convert('RGB')
-        original_w, original_h = image.size() # PIL gives width, height; we will use this to scale the bounding boxes
+        original_w, original_h = image.size # PIL gives width, height; we will use this to scale the bounding boxes
         
         # PARSE XML TREE
         tree = ET.parse(ann_path)
@@ -53,7 +52,7 @@ class VOCDataset(Dataset):
         for obj in root.findall('object'):
             label = obj.find('name').text.lower().strip()
     
-            if label not in self.class_names:
+            if label not in self.class_dict:
                 continue
             
             labels.append(self.class_dict[label])
@@ -74,10 +73,11 @@ class VOCDataset(Dataset):
         new_h, new_w = self.resize_shape # Again, we take in (height, width) for resize; but PIL uses (width, height)
         
         # Scale the bounding boxes as per the scale the image was changed
-        scale_x = new_w / original_w
-        scale_y = new_h / original_h
-        boxes[:, [0, 2]] *= scale_x 
-        boxes[:, [1, 3]] *= scale_y
+        if len(boxes) > 0:
+            scale_x = new_w / original_w
+            scale_y = new_h / original_h
+            boxes[:, [0, 2]] *= scale_x 
+            boxes[:, [1, 3]] *= scale_y
         
         target = {
             "boxes": boxes,
@@ -124,7 +124,7 @@ def get_data(batch_size=32, train_size=0.8, shuffle=True):
     train_dataloader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn, drop_last=True)
     test_dataloader = DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, drop_last=True)
     
-    return train_dataloader, test_dataloader, dataset.class_dict
+    return train_dataloader, test_dataloader, dataset.class_dict, dataset.class_names
 
 # During training and inference, the model expects images to be resized to a fixed size 
 # (e.g., 224x224) for consistency and performance. The bounding box annotations are also 
