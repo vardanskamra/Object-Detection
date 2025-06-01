@@ -2,17 +2,12 @@ import torch
 import matplotlib.pyplot as plt 
 import matplotlib.patches as patches
 
-# Non Max Supression
-def nms(predictions, iou_threshold, conf_threshold):
+# Non Max Supression; only used in inference, not in training
+def nms(predictions, iou_threshold):
     # predictions is [[], [], ....] list of boxes
     # each box is [xmin, ymin, xmax, ymax, conf, class_id]
-    
-    # If confidence is less than certain threshold, remove the box
-    predictions = [box for box in predictions if box[4] > conf_threshold]
-    
     # Sort the list in descending order based on the 5th element of each item 
     predictions.sort(key=lambda x: x[4], reverse=True) 
-
     final_boxes = []
     
     while predictions:
@@ -140,19 +135,46 @@ def linear_to_yolo(model_output, S, B, C):
     # -1 means PyTorch infers the batch size automatically
     return model_output.view(-1, S, S, C+B*5)
 
-# Make Boxes from YOLO-Style Output
-def yolo_to_boxes():
-    pass
+# Make Boxes from YOLO-Style Output; only used for inference, not for training
+def yolo_to_boxes(yolo_pred, S=7, B=2, C=20, confidence_threshold=0.5):
+    boxes = []
+    for i in range(S):
+        for j in range(S):
+            cell = yolo_pred[i, j]
+            class_prob = cell[:C]
+            class_id = torch.argmax(class_prob).item()
+            class_score = class_prob[class_id].item()
+            
+            for b in range(B):
+                idx = C + 5 * B
+                x, y, w, h, obj = b[idx : idx+5]
+                conf = (obj * class_score).item() # confidence = objectness * class probability
+                
+                if conf < confidence_threshold:
+                    continue
+                
+                xmin, ymin, xmax, ymax = center_to_corner(x, y, w, h)
+                boxes.append([xmin, ymin, xmax, ymax, conf, class_id])
+                
+    return boxes
 
 # Corner Coordinates to Center Coordinates
 def corner_to_center(xmin, ymin, xmax, ymax):
-    
     x_center = (xmin + xmax) / 2.0
     y_center = (ymin + ymax) / 2.0
     width = xmax - xmin
     height = ymax - ymin
 
     return (x_center, y_center, width, height)
+
+# Center Coordinates to Corner Coordinates
+def center_to_corner(x_center, y_center, width, height):
+    xmin = x_center - width/2
+    ymin = y_center - height/2
+    xmax = x_center + width/2
+    ymax = y_center + height/2
+    
+    return (xmin, ymin, xmax, ymax)
 
 # Visualize Bounding Boxes
 def visualize_bounding_boxes(image: torch.tensor, target, class_names):
